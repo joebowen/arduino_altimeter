@@ -50,8 +50,8 @@
 // Velocity limit to trigger apogee detection
 #define APOGEE_VEL 10         // meter/second
 
-// Drogue (pyro2) altitude limit
-#define DROGUE_ALT 150        // meters
+// Main (pyro2) altitude limit
+#define MAIN_ALT 150          // meters
 
 // Flight end detection height
 #define GROUND_ALT 10         // meters
@@ -60,19 +60,24 @@
 // baro sensor.
 #define MAX_BARO_ALT 9000     // meters  
 
+// Speed from the accelerometer above which locks 
+// out deployment of drogue due to suspected mach effects.
+#define MACH_LOCK 100         // meters/second
+
 // Set these to enable/disable features.
 // This is useful for reducing flash and ram
 // usage on smaller processors.
 #define USE_SD true           // Use SD Card Module?
 #define USE_LIS3DH true       // Use LIS3DH accel module?
-#define USE_1D_KALMAN true    // Use baro only calculations?
-#define USE_2D_KALMAN true    // Use accel and baro calculations?
 #define USE_ADXL true         // Use analog accel inputs for logging? 
 
 // Analog pin numbers for analog accel inputs
 #define ADXL_Z_PIN 2
 #define ADXL_Y_PIN 1
 #define ADXL_X_PIN 0
+
+// Accelerometer smoothing variable for the exponential decaying moving average.
+#define SMOOTHING .02 
 
 // Newline defaults
 #define NEWLINE true
@@ -85,28 +90,6 @@
 #define S_WAITFORGROUND 3
 #define S_FINISHED 4
 
-// 2D Kalman filter variables (Baro and Accel)
-float est[3] = {0, 0, 0};
-float estp[3] = {0, 0, 0};
-float phi[3][3] = {{1, 0, 0},
-  {0, 1, 0},
-  {0, 0, 1.0}
-};
-
-// 2D Kalman Gain Matrix (Baro and Accel)
-// Calculated using rkal32.c
-float kgain[3][2] = {{0.114263, 0.057967},
-  {0.055419, 0.088090},
-  {0.019825, 0.085453}
-};
-
-// 1D Kalman filter variables (Baro only)
-float P = 1.0;
-float varP = pow(0.01, 2);
-float varM = pow(0.5, 2);
-float K = 1.0;
-float kalVel = 0.0;
-
 // Altimeter state variables
 int state = S_INIT;           // Current state
 unsigned long ts1;            // Milliseconds from first pyro
@@ -117,6 +100,22 @@ unsigned long flight_num = 0; // Flight Number
 unsigned long prevMilli;      // Previous measurement time (milliseconds)
 float prevAlt;                // Previous altitude measurement (meters)
 float startAlt;               // Initial altitude measurement (meters)
+
+float avgXaccel;             // Average X acceleration (m/s^2)
+float avgYaccel;             // Average Y acceleration (m/s^2)
+float avgZaccel;             // Average Z acceleration (m/s^2)      
+
+float xAccelAdj = 0;         // Adjustment factor for gravity in the X axis
+float yAccelAdj = 0;         // Adjustment factor for gravity in the Y axis
+float zAccelAdj = 0;         // Adjustment factor for gravity in the Z axis
+
+float xAccelVel = 0;         // X Velocity based on X Accelerometer (m/s)
+float yAccelVel = 0;         // Y Velocity based on Y Accelerometer (m/s)
+float zAccelVel = 0;         // Z Velocity based on Z Accelerometer (m/s)  
+
+float prevXaccel = 0;        // Previous X acceleration value (m/s^2)
+float prevYaccel = 0;        // Previous Y acceleration value (m/s^2)
+float prevZaccel = 0;        // Previous Z acceleration value (m/s^2)
 
 // Sensor Initalization
 Adafruit_BMP280 bme(BMP_CS);
@@ -152,8 +151,8 @@ void setup()
     lis.setRange(LIS3DH_RANGE_16_G);
   }
 
-  write_to_sd_str("time(ms),temperature(C),pressure,absolute altitude(m)(probably wrong),altitude(m),raw velocity(m/s),filtered velocity(m/s)");
-  write_to_sd_str("Raw X Accel(m/s^2),Raw Y Accel(m/s^2),Raw Z Accel(m/s^2),Vector Accel(m/s^2),Est Alt(m),Est Vel(m/s),Est Accel(m/s^2)");
+  write_to_sd_str("time(ms),temperature(C),pressure,absolute altitude(m)(probably wrong),altitude(m),raw velocity(m/s)");
+  write_to_sd_str("Raw X Accel(m/s^2),Raw Y Accel(m/s^2),Raw Z Accel(m/s^2),Vector Accel(m/s^2)");
   write_to_sd_str("Analog Raw X Accel(m/s^2),Analog Raw Y Accel(m/s^2),Analog Raw Z Accel(m/s^2)");
   write_to_sd_new_line();
 
@@ -171,7 +170,15 @@ void setup()
   // Initialize clock.
   prevMilli = millis();
 
-  
+  // Initialize initial acceleration moving averages
+  if (USE_LIS3DH) {
+    sensors_event_t event; 
+    lis.getEvent(&event);
+
+    avgXaccel = event.acceleration.x;
+    avgYaccel = event.acceleration.y;
+    avgZaccel = event.acceleration.z;
+  }
 }
 
 void loop()
@@ -184,10 +191,6 @@ void loop()
 
   float rawVel = (rawAlt - prevAlt) / ((float)(curMilli - prevMilli) / 1000);
 
-  if (USE_1D_KALMAN) {
-    oneD_kalman(rawVel);
-  }
-
   float relAlt = rawAlt - startAlt;
 
   prevAlt = rawAlt;
@@ -199,41 +202,50 @@ void loop()
   write_to_sd_float(rawAlt);
   write_to_sd_float(relAlt);
   write_to_sd_float(rawVel);
-  write_to_sd_float(kalVel);
 
   float vec_accel = 0;
+  float vecAccelVel = 0;
 
   if (USE_LIS3DH) {
     sensors_event_t event;
     lis.getEvent(&event);
 
+    // Exponentially decaying moving average
+    // The filter uses a fairly small SMOOTHING variable to allow the filter
+    // to retain the average gravity a few cycles after launch when the launch code
+    // finally detects a launch and saves these values to be used in offsets.
+    avgXaccel = SMOOTHING * event.acceleration.x + (1.0 - SMOOTHING) * avgXaccel;
+    avgYaccel = SMOOTHING * event.acceleration.y + (1.0 - SMOOTHING) * avgYaccel;
+    avgZaccel = SMOOTHING * event.acceleration.z + (1.0 - SMOOTHING) * avgZaccel;
+
+    write_to_sd_float(avgXaccel);
+    write_to_sd_float(avgYaccel);
+    write_to_sd_float(avgZaccel);
+
     write_to_sd_float(event.acceleration.x);
     write_to_sd_float(event.acceleration.y);
     write_to_sd_float(event.acceleration.z);
 
-    vec_accel = abs_accel(event.acceleration.x, event.acceleration.y, event.acceleration.z);
+    vec_accel = abs_vector(event.acceleration.x, event.acceleration.y, event.acceleration.z);
+
+    write_to_sd_float(vec_accel);
+
+    // Integrate the accelerometer data to generate velocity values.
+    xAccelVel = xAccelVel + (((double)(curMilli - prevMilli) / 1000) * (prevXaccel + event.acceleration.x - xAccelAdj) / 2);
+    yAccelVel = yAccelVel + (((double)(curMilli - prevMilli) / 1000) * (prevYaccel + event.acceleration.y - yAccelAdj) / 2);
+    zAccelVel = zAccelVel + (((double)(curMilli - prevMilli) / 1000) * (prevZaccel + event.acceleration.z - zAccelAdj) / 2);
+    
+    prevXaccel = event.acceleration.x - xAccelAdj;
+    prevYaccel = event.acceleration.y - yAccelAdj;
+    prevZaccel = event.acceleration.z - zAccelAdj;
+
+    vecAccelVel = abs_vector(xAccelVel, yAccelVel, zAccelVel);
+
+    write_to_sd_float(vecAccelVel);
   }
 
-  if (USE_2D_KALMAN) {
-    if (USE_LIS3DH) {
-      write_to_sd_float(vec_accel);
-    }
-
-    twoD_kalman(vec_accel, relAlt);
-
-    write_to_sd_float(est[0]);
-    write_to_sd_float(est[1]);
-    write_to_sd_float(est[2]);
-
-    altimeter_state_tree(curMilli, est[1], est[0]);
-  }
-  else {
-    if (USE_LIS3DH) {
-      write_to_sd_float(vec_accel);
-    }
-
-    altimeter_state_tree(curMilli, kalVel, relAlt);
-  }
+  altimeter_state_tree(curMilli, vecAccelVel, rawVel, relAlt);
+  
 
   if (USE_ADXL) {
     write_to_sd_long(analogRead(ADXL_X_PIN));
@@ -244,12 +256,12 @@ void loop()
   write_to_sd_new_line();
 }
 
-float abs_accel(float accel_x, float accel_y, float accel_z)
+float abs_vector(float accel_x, float accel_y, float accel_z)
 {
   return sqrt(pow(accel_x, 2) + pow(accel_y, 2) + pow(accel_z, 2));
 }
 
-int altimeter_state_tree(unsigned long time, float vel, float alt)
+int altimeter_state_tree(unsigned long time, float accelVel, float vel, float alt)
 {
   switch (state)
   {
@@ -257,6 +269,10 @@ int altimeter_state_tree(unsigned long time, float vel, float alt)
       if (time > TRIGGER_TIME) {
         if (vel > TRIGGER_VEL) {
           if (alt > TRIGGER_ALT) {
+            xAccelAdj = avgXaccel;
+            yAccelAdj = avgYaccel;
+            zAccelAdj = avgZaccel;
+            
             state = S_FLIGHTSTARTED;
           }
         }
@@ -265,7 +281,7 @@ int altimeter_state_tree(unsigned long time, float vel, float alt)
       break;
 
     case S_FLIGHTSTARTED:
-      if (vel < APOGEE_VEL) {
+      if (vel < APOGEE_VEL && accelVel < MACH_LOCK) {
         fire_pyro(PYRO1);
         state = S_WAITFORPYRO2;
         ts1 = time;
@@ -275,7 +291,7 @@ int altimeter_state_tree(unsigned long time, float vel, float alt)
       break;
 
     case S_WAITFORPYRO2:
-      if (alt < DROGUE_ALT) {
+      if (alt < MAIN_ALT) {
         fire_pyro(PYRO2);
         state = S_WAITFORGROUND;
         ts2 = time;
@@ -497,56 +513,4 @@ void fire_pyro(int pyro_ch)
  
   write_to_sd_str("Successful pyro.");
   write_to_sd_new_line();
-}
-
-void oneD_kalman(float value)
-{
-  P = P + varP;
-  K = P / (P + varM);
-  kalVel = K * value + (1 - K) * kalVel;
-  P = (1 - K) * P;
-}
-
-void twoD_kalman(float accel, float alt)
-{
-  // Compute the innovations
-  float alt_inovation = alt - estp[0];
-  float accel_inovation = accel - estp[2];
-
-  // Experimental code to modify Mach transition pressure
-  // disturbances.
-  if ( abs(alt_inovation) > 100 ) {
-    // We have a large error in altitude. Now see how fast we are
-    // going.
-    if ( estp[1] > 256 && estp[1] < 512 ) {
-      // Somewhere in the neighborhood of Mach 1. Now check to
-      // see if we are slowing down.
-      if ( estp[2] < 0 ) {
-        // OK, now what do we do? Assume that velocity and
-        // acceleration estimates are accurate. Adjust current
-        // altitude estimate to be the same as the measured
-        // altitude.
-        est[0] = alt;
-        alt_inovation = 0;
-      }
-    }
-  }
-
-  // Simple check for over-range on pressure measurement.
-  // This is just hacked in based on a single data set. Actual
-  // flight software needs something more sophisticated.
-  // TODO: Fix this...
-  if ( alt > MAX_BARO_ALT ) {
-    alt_inovation = 0;
-  }
-
-  // Propagate state
-  estp[0] = phi[0][0] * est[0] + phi[0][1] * est[1] + phi[0][2] * est[2];
-  estp[1] = phi[1][0] * est[0] + phi[1][1] * est[1] + phi[1][2] * est[2];
-  estp[2] = phi[2][0] * est[0] + phi[2][1] * est[1] + phi[2][2] * est[2];
-
-  // Update state
-  est[0] = estp[0] + kgain[0][0] * alt_inovation + kgain[0][1] * accel_inovation;
-  est[1] = estp[1] + kgain[1][0] * alt_inovation + kgain[1][1] * accel_inovation;
-  est[2] = estp[2] + kgain[2][0] * alt_inovation + kgain[2][1] * accel_inovation;
 }

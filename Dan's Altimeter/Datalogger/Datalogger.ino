@@ -50,7 +50,7 @@
 #define MAIN_ALT 150          // meters
 
 // Flight end detection height
-#define GROUND_ALT 50         // meters
+#define GROUND_ALT 25         // meters
 
 // Set this to the maximum working altitude of the 
 // baro sensor.
@@ -66,7 +66,8 @@
 #define USE_SD false          // Use SD Card Module?
 #define USE_LIS3DH true       // Use LIS3DH accel module?
 
-#define SMOOTHING .02         // Accelerometer smoothing variable for the exponential decaying moving average.
+// Accelerometer smoothing variable for the exponential decaying moving average.
+#define SMOOTHING .02         
 
 // Newline defaults
 #define NEWLINE true
