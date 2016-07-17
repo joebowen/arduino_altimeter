@@ -48,9 +48,9 @@ gcc -o rkal32 rkal32.c -lm
 #include <string.h>
 #include <math.h>
 
-#define ALTITUDESIGMA 15.0
-#define ACCELERATIONSIGMA 6.0
-#define MODELSIGMA 0.6
+#define ALTITUDESIGMA 4.5
+#define ACCELERATIONSIGMA 1.8
+#define MODELSIGMA 0.2
 
 double altitude_variance = ALTITUDESIGMA*ALTITUDESIGMA;
 double acceleration_variance = ACCELERATIONSIGMA*ACCELERATIONSIGMA;
@@ -248,7 +248,7 @@ main(int argc, char **argv)
 
     /* Output header for data. */
     printf("\n# Output from rkal32:\n# A third order Kalman filter using acceleration and pressure measurements\n");
-    printf("\n\nTime,Pressure,Alt,Accel,Est Pos,Est Vel,Est Accel\n");
+    printf("\n\nTime,Pressure Alt,Accel,Est Pos,Est Vel,Est Accel\n");
     while(fscanf(fp, "%lf,%lf,%lf\n", &time, &accel, &pressure) != EOF)
     {
         /* Convert from milliseconds to seconds. */
