@@ -34,7 +34,7 @@
 #define PYRO2 10              // Pin Number
 
 // Duration of pyro charge.
-#define PYRO_DURATION 2000    // milliseconds
+#define PYRO_DURATION 10000    // milliseconds
 
 // Flight start detection settings.
 // Values must be greater than all three settings
@@ -112,7 +112,7 @@ Adafruit_BMP280 bme(BMP_CS);
 Adafruit_LIS3DH lis = Adafruit_LIS3DH(LIS3DH_CS);
 
 void setup()
-{
+{   
   // see if the SD card is present and can be initialized
   if (USE_SD) {
     if (!SD.begin(SD_CS)) {
@@ -228,7 +228,6 @@ void loop()
   }
   
   altimeter_state_tree(curMilli, vecAccelVel, rawVel, relAlt);
-
 }
 
 double abs_vector(double accel_x, double accel_y, double accel_z)
@@ -397,8 +396,8 @@ void failure_mode(String errMsg)
   
   analogWrite(BUZZER_PIN, 10); 
   
-  turn_off_pyro(PYRO1);
-  turn_off_pyro(PYRO2);
+  //turn_off_pyro(PYRO1);
+  //turn_off_pyro(PYRO2);
   
   while (1);
 }

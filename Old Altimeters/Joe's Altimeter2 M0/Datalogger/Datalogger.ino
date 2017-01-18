@@ -151,9 +151,9 @@ void setup()
     lis.setRange(LIS3DH_RANGE_16_G);
   }
 
-  write_to_sd_str("time(ms),temperature(C),pressure,absolute altitude(m)(probably wrong),altitude(m),raw velocity(m/s)");
-  write_to_sd_str("Raw X Accel(m/s^2),Raw Y Accel(m/s^2),Raw Z Accel(m/s^2),Vector Accel(m/s^2)");
-  write_to_sd_str("Analog Raw X Accel(m/s^2),Analog Raw Y Accel(m/s^2),Analog Raw Z Accel(m/s^2)");
+  write_to_sd_str("time(ms),temperature(C),pressure,absolute altitude(m)(probably wrong),altitude(m),raw velocity(m/s),");
+  write_to_sd_str("Average X Accel(m/s^2),Average Y Accel(m/s^2),Average Z Accel(m/s^2),X Accel(m/s^2),Y Accel(m/s^2),");
+  write_to_sd_str("Z Accel(m/s^2),Accel Vector (m/s^2),Integrated Vel (m/s),Analog X Accel,Analog Y Accel,Analog Z Accel");
   write_to_sd_new_line();
 
   // Take and discard first 10 measurements.
@@ -231,9 +231,9 @@ void loop()
     write_to_sd_float(vec_accel);
 
     // Integrate the accelerometer data to generate velocity values.
-    xAccelVel = xAccelVel + (((double)(curMilli - prevMilli) / 1000) * (prevXaccel + event.acceleration.x - xAccelAdj) / 2);
-    yAccelVel = yAccelVel + (((double)(curMilli - prevMilli) / 1000) * (prevYaccel + event.acceleration.y - yAccelAdj) / 2);
-    zAccelVel = zAccelVel + (((double)(curMilli - prevMilli) / 1000) * (prevZaccel + event.acceleration.z - zAccelAdj) / 2);
+    xAccelVel = xAccelVel + (((float)(curMilli - prevMilli) / 1000) * (prevXaccel + event.acceleration.x - xAccelAdj) / 2);
+    yAccelVel = yAccelVel + (((float)(curMilli - prevMilli) / 1000) * (prevYaccel + event.acceleration.y - yAccelAdj) / 2);
+    zAccelVel = zAccelVel + (((float)(curMilli - prevMilli) / 1000) * (prevZaccel + event.acceleration.z - zAccelAdj) / 2);
     
     prevXaccel = event.acceleration.x - xAccelAdj;
     prevYaccel = event.acceleration.y - yAccelAdj;
