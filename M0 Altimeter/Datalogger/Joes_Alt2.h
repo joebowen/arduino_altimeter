@@ -6,9 +6,9 @@
 */
 
 // Chip select pins for sensors and sd card.
-#define BMP_CS 13             // Pin Number
+#define BMP_CS 0              // Pin Number
 #define SD_CS 4               // Pin Number
-#define LIS3DH_CS 12          // Pin Number
+#define LIS3DH_CS 1           // Pin Number
 
 // Buzzer pin
 #define BUZZER_PIN 3          // Pin Number

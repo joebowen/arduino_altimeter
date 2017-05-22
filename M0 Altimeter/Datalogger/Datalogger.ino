@@ -267,7 +267,8 @@ void altimeter_state_tree(unsigned long time, float accelVel, float vel, float a
       break;
 
     case S_FINISHED:
-      failure_mode("Finished!");
+      write_to_sd_str("Finished");
+      write_to_sd_new_line();
 
       break;
   }
